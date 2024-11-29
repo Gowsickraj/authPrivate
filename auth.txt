@@ -1,0 +1,195 @@
+auth.js
+
+import axiosInstance from "./axiosInstance";
+
+// Function to check if the user is authenticated
+export const checkAuthentication = async () => {
+  const token = localStorage.getItem("token");
+  const hash = localStorage.getItem("hash");
+
+  if (!token || !hash) {
+    return false; // No token or hash means the user is not authenticated
+  }
+
+  try {
+    // Verify the token and hash with the backend
+    const response = await axiosInstance.post("/authendicate", { token, hash });
+    return response.data.isValid; // Return if the token is valid
+  } catch (error) {
+    console.error("Error verifying token:", error);
+    return false; // Authentication failed
+  }
+};
+
+
+PrivateRoute.js
+
+
+import React, { useEffect, useState } from "react";
+import { Navigate } from "react-router-dom";
+import { checkAuthentication } from "../utils/auth";
+
+const PrivateRoute = ({ element }) => {
+  const [isAuthenticated, setIsAuthenticated] = useState(null);
+
+  useEffect(() => {
+    const verifyAuth = async () => {
+      const isValid = await checkAuthentication();
+      setIsAuthenticated(isValid);
+    };
+
+    verifyAuth();
+  }, []);
+
+  if (isAuthenticated === null) {
+    // Show a loader while authentication is being verified
+    return <div>Loading...</div>;
+  }
+
+  return isAuthenticated ? element : <Navigate to="/cms" />;
+};
+
+export default PrivateRoute;
+
+
+backend
+
+
+auth.js
+
+
+const { idpTokenModel } = require("../models/IdpModel");
+
+
+// Token verification function
+const verifyTokenAndHash = async (req, res) => {
+  const { token, hash } = req.body;
+
+  if (!token || !hash) {
+    return res.status(400).json({ isValid: false, message: "Token or hash is missing." });
+  }
+
+  try {
+    const tokenRecord = await idpTokenModel.findOne({ hash });
+
+    if (!tokenRecord) {
+      return res.status(404).json({ isValid: false, message: "User not found with this hash." });
+    }
+      if (tokenRecord.accessToken === token) {
+        return res.status(200).json({ isValid: true, message: "Token and hash are valid." });
+      } else {
+        return res.status(401).json({ isValid: false, message: "Invalid token." });
+      }
+    }
+   catch (error) {
+    console.error("Error verifying token:", error);
+    return res.status(500).json({ isValid: false, message: "Internal server error during verification." });
+  }
+};
+
+module.exports = { verifyTokenAndHash };
+
+
+
+axiosInstanse
+
+
+
+import axios from 'axios';
+// Function to get the token from localStorage
+const getToken = () => {
+  return localStorage.getItem('token');  
+};
+
+// Function to get the hash from localStorage
+const getHash = () => {
+  return localStorage.getItem('hash');
+};
+
+// Create axios instance
+const axiosInstance = axios.create({
+  baseURL: "http://192.168.29.14:7500/cms",
+  timeout: 5000,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+axiosInstance.interceptors.request.use(
+  (config) => {
+    const token = getToken();  
+    const hash = getHash();    
+
+    if (token) {
+      config.headers['Authorization'] = `Bearer ${token}`;  
+    }
+
+    if (hash) {
+      config.headers['mobile-hash'] = hash; 
+    }
+
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
+
+// Handle response (e.g., token expiration)
+axiosInstance.interceptors.response.use(
+  (response) => {
+    return response;
+  },
+  (error) => {
+    if (error.response && error.response.status === 401) {
+      console.error('Unauthorized: Redirecting to login...');
+      
+      // Remove token and hash from localStorage
+      localStorage.removeItem('token');
+      localStorage.removeItem('hash');
+      
+      // Redirect to login page
+      window.location.href = '/'; 
+    }
+    return Promise.reject(error);
+  }
+);
+
+export default axiosInstance;
+
+axios backend
+
+const { idpTokenModel } = require("../models/IdpModel");
+
+const verifyJWT = async (req, res, next) => {
+    try {
+      
+  
+      // Get the email_hash from the custom header ('x-email-hash')
+      const hash = req.headers["mobile-hash"];
+      
+      if (!hash) {
+        return res.status(400).json({ message: "hash not provided" });
+      }
+  
+      // // Find the user based on email hash
+      const user = await idpTokenModel.findOne({ hash });
+  
+      if (!user) {
+        return res.status(401).json({ message: "User not found" });
+      }
+  
+      // Attach user information to the request object
+      req.user = user;
+  
+      // Proceed to the next middleware or route handler
+      next();
+  
+    } catch (error) {
+      return res.status(500).json({ message: error.message });
+    }
+  };
+  
+  module.exports = { verifyJWT };
+
+
